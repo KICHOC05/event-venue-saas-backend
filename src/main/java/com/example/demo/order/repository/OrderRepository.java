@@ -8,7 +8,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
+
+import jakarta.persistence.LockModeType;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -16,6 +19,23 @@ import java.util.Optional;
 public interface OrderRepository extends JpaRepository<Order, Long> {
 
         Optional<Order> findByPublicIdAndTenant_Id(String publicId, Long tenantId);
+
+        @EntityGraph(attributePaths = {"branch", "user", "client"})
+        Optional<Order> findByPublicIdAndTenant_IdAndBranch_Id(
+                        String publicId, Long tenantId, Long branchId);
+
+        @Lock(LockModeType.PESSIMISTIC_WRITE)
+        @EntityGraph(attributePaths = {"tenant", "branch", "user", "client"})
+        @Query("""
+                        SELECT o FROM Order o
+                        WHERE o.publicId = :publicId
+                          AND o.tenant.id = :tenantId
+                          AND o.branch.id = :branchId
+                        """)
+        Optional<Order> findForCheckoutForUpdate(
+                        @Param("publicId") String publicId,
+                        @Param("tenantId") Long tenantId,
+                        @Param("branchId") Long branchId);
 
         @Query("""
                             SELECT COUNT(o)

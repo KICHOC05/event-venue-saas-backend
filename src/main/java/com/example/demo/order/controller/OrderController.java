@@ -69,6 +69,15 @@ public class OrderController {
         return orderService.closeOrder(orderPublicId);
     }
 
+    @PostMapping("/{orderPublicId}/checkout")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','CASHIER','EMPLOYEE')")
+    public CheckoutResponse checkout(
+            @PathVariable String orderPublicId,
+            @Valid @RequestBody CheckoutRequest request) {
+
+        return orderService.checkout(orderPublicId, request);
+    }
+
     @PostMapping("/{orderPublicId}/cancel")
     @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
     public OrderResponse cancelOrder(

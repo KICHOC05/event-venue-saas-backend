@@ -15,6 +15,8 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 
+import io.micrometer.core.annotation.Timed;
+
 @Service
 @RequiredArgsConstructor
 public class PublicAvailabilityService {
@@ -31,6 +33,7 @@ public class PublicAvailabilityService {
     private final EventBookingRepository eventBookingRepository;
 
     @Transactional(readOnly = true)
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "availability", "operation", "calendar"})
     public PublicAvailabilityCalendarResponse getCalendar(
             String tenantPublicId,
             LocalDate from,

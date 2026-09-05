@@ -28,6 +28,8 @@ import java.time.format.TextStyle;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import io.micrometer.core.annotation.Timed;
+
 @Service
 @RequiredArgsConstructor
 public class DashboardService {
@@ -47,6 +49,7 @@ public class DashboardService {
                         EventStatus.CONFIRMED,
                         EventStatus.IN_PROGRESS);
 
+        @Timed(value = "spacekids.service.requests", extraTags = {"service", "dashboard", "operation", "summary"})
         public DashboardResponse getDashboard() {
 
                 Long tenantId = TenantContext.getTenantId();
@@ -124,6 +127,7 @@ public class DashboardService {
                                 .build();
         }
 
+        @Timed(value = "spacekids.service.requests", extraTags = {"service", "dashboard", "operation", "stats"})
         public StatsResponse getStats(Integer rangeDays) {
 
                 Long tenantId = TenantContext.getTenantId();

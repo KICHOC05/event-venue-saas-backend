@@ -9,11 +9,11 @@ import com.example.demo.cash.model.CashMovement;
 import com.example.demo.cash.model.CashRegister;
 import com.example.demo.cash.repository.CashMovementRepository;
 import com.example.demo.cash.repository.CashRegisterRepository;
+import com.example.demo.cash.repository.projection.CashMovementTotalsProjection;
+import com.example.demo.cash.repository.projection.CashPaymentTotalsProjection;
 import com.example.demo.cash.service.CashService;
 import com.example.demo.cash.service.CashSettingsService;
-import com.example.demo.common.enums.CashMovementType;
 import com.example.demo.common.enums.CashStatus;
-import com.example.demo.common.enums.PaymentMethod;
 import com.example.demo.common.enums.UserRole;
 import com.example.demo.event.repository.EventPaymentRepository;
 import com.example.demo.payment.repository.PaymentRepository;
@@ -36,6 +36,8 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.lenient;
@@ -80,7 +82,8 @@ class CashServiceEventPaymentTest {
         cash.setStatus(CashStatus.OPEN);
 
         TenantContext.set(new TenantContext.TenantInfo(10L, 20L, 30L, UserRole.ADMIN));
-        lenient().when(cashRegisterRepository.findByBranch_IdAndStatus(20L, CashStatus.OPEN))
+        lenient().when(cashRegisterRepository.findByTenant_IdAndBranch_IdAndStatus(
+                        10L, 20L, CashStatus.OPEN))
                 .thenReturn(Optional.of(cash));
     }
 
@@ -174,32 +177,34 @@ class CashServiceEventPaymentTest {
     }
 
     @Test
-    void eventQueriesAreScopedToTheExplicitCashRegister() {
+    void consolidatedQueriesAreScopedToTenantBranchAndCashRegister() {
         stubSales("0", "0", "0", "0", "0", "0", "0", "0");
 
         cashService.currentCash();
 
-        verify(eventPaymentRepository).sumByCashRegisterAndPaymentMethod(45L, PaymentMethod.CASH);
-        verify(eventPaymentRepository).sumByCashRegisterAndPaymentMethod(45L, PaymentMethod.CARD);
-        verify(eventPaymentRepository).sumByCashRegisterAndPaymentMethod(45L, PaymentMethod.TRANSFER);
+        verify(cashRegisterRepository).sumPaymentTotals(
+                eq(10L), eq(20L), eq(45L), any(), any());
+        verify(cashMovementRepository).sumMovementTotals(10L, 20L, 45L);
     }
 
     private void stubSales(String posCash, String posCard, String posTransfer,
                            String eventCash, String eventCard, String eventTransfer,
                            String deposits, String withdrawals) {
-        when(paymentRepository.sumCashPayments(any(), any(), any())).thenReturn(bd(posCash));
-        when(paymentRepository.sumCardPayments(any(), any(), any())).thenReturn(bd(posCard));
-        when(paymentRepository.sumTransferPayments(any(), any(), any())).thenReturn(bd(posTransfer));
-        when(eventPaymentRepository.sumByCashRegisterAndPaymentMethod(45L, PaymentMethod.CASH))
-                .thenReturn(bd(eventCash));
-        when(eventPaymentRepository.sumByCashRegisterAndPaymentMethod(45L, PaymentMethod.CARD))
-                .thenReturn(bd(eventCard));
-        when(eventPaymentRepository.sumByCashRegisterAndPaymentMethod(45L, PaymentMethod.TRANSFER))
-                .thenReturn(bd(eventTransfer));
-        when(cashMovementRepository.sumByCashRegisterAndType(45L, CashMovementType.DEPOSIT))
-                .thenReturn(bd(deposits));
-        when(cashMovementRepository.sumByCashRegisterAndType(45L, CashMovementType.WITHDRAWAL))
-                .thenReturn(bd(withdrawals));
+        CashPaymentTotalsProjection paymentTotals = mock(CashPaymentTotalsProjection.class);
+        when(paymentTotals.getPosCashSales()).thenReturn(bd(posCash));
+        when(paymentTotals.getPosCardSales()).thenReturn(bd(posCard));
+        when(paymentTotals.getPosTransferSales()).thenReturn(bd(posTransfer));
+        when(paymentTotals.getEventCashPayments()).thenReturn(bd(eventCash));
+        when(paymentTotals.getEventCardPayments()).thenReturn(bd(eventCard));
+        when(paymentTotals.getEventTransferPayments()).thenReturn(bd(eventTransfer));
+        when(cashRegisterRepository.sumPaymentTotals(
+                eq(10L), eq(20L), eq(45L), any(), any())).thenReturn(paymentTotals);
+
+        CashMovementTotalsProjection movementTotals = mock(CashMovementTotalsProjection.class);
+        when(movementTotals.getDepositTotal()).thenReturn(bd(deposits));
+        when(movementTotals.getWithdrawalTotal()).thenReturn(bd(withdrawals));
+        when(cashMovementRepository.sumMovementTotals(10L, 20L, 45L))
+                .thenReturn(movementTotals);
     }
 
     private BigDecimal bd(String value) {

@@ -2,6 +2,8 @@ package com.example.demo.config;
 
 import java.util.List;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -33,13 +35,16 @@ public class SecurityConfig {
     private final JwtService jwtService;
     private final UserRepository userRepository;
     private final TenantRepository tenantRepository;
+    private final MeterRegistry meterRegistry;
 
     public SecurityConfig(JwtService jwtService,
             UserRepository userRepository,
-            TenantRepository tenantRepository) {
+            TenantRepository tenantRepository,
+            MeterRegistry meterRegistry) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
         this.tenantRepository = tenantRepository;
+        this.meterRegistry = meterRegistry;
     }
 
     @Bean
@@ -68,7 +73,7 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
 
         JwtAuthenticationFilter jwtFilter = new JwtAuthenticationFilter(
-                jwtService, userRepository, tenantRepository);
+                jwtService, userRepository, tenantRepository, meterRegistry);
 
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
@@ -79,6 +84,12 @@ public class SecurityConfig {
 
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                        .requestMatchers(
+                                "/actuator/info",
+                                "/actuator/metrics", "/actuator/metrics/**",
+                                "/actuator/prometheus").hasRole("ADMIN")
+                        .requestMatchers("/actuator", "/actuator/**").denyAll()
                         .requestMatchers("/ws", "/ws/**").permitAll()
                         .requestMatchers("/api/auth/login").permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.GET,

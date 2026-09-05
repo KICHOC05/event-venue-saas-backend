@@ -1,6 +1,7 @@
 package com.example.demo.auth.service;
 
 import lombok.RequiredArgsConstructor;
+import io.micrometer.core.annotation.Timed;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
 
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "auth", "operation", "login"})
     public LoginResponse login(LoginRequest request) {
 
         Tenant tenant = tenantRepository

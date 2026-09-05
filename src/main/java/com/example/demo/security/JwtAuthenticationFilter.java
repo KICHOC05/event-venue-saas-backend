@@ -17,19 +17,25 @@ import com.example.demo.user.model.User;
 import com.example.demo.user.repository.UserRepository;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
+
+import io.micrometer.core.instrument.MeterRegistry;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final UserRepository userRepository;
     private final TenantRepository tenantRepository;
+    private final MeterRegistry meterRegistry;
 
     public JwtAuthenticationFilter(JwtService jwtService,
             UserRepository userRepository,
-            TenantRepository tenantRepository) {
+            TenantRepository tenantRepository,
+            MeterRegistry meterRegistry) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
         this.tenantRepository = tenantRepository;
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
@@ -52,13 +58,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         String token = header.substring(7);
+        long authenticationStartedAt = System.nanoTime();
 
         // 🔹 Validar token
         if (!jwtService.isValid(token)) {
+            recordAuthentication(authenticationStartedAt, "invalid-token");
             filterChain.doFilter(request, response);
             return;
         }
 
+        boolean authenticationRecorded = false;
         try {
             // 🔹 Extraer claims
             String userPublicId = jwtService.getUserPublicId(token);
@@ -72,6 +81,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (tenant == null ||
                     tenant.getStatus() == TenantStatus.SUSPENDED ||
                     tenant.getStatus() == TenantStatus.CANCELLED) {
+                recordAuthentication(authenticationStartedAt, "tenant-rejected");
+                authenticationRecorded = true;
                 forbidden(response, "Tenant inválido o inactivo");
                 return;
             }
@@ -80,18 +91,24 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             User user = userRepository.findByPublicId(userPublicId).orElse(null);
 
             if (user == null || !Boolean.TRUE.equals(user.getActive())) {
+                recordAuthentication(authenticationStartedAt, "user-rejected");
+                authenticationRecorded = true;
                 forbidden(response, "Usuario inválido o desactivado");
                 return;
             }
 
             // 🔹 Validar pertenencia al tenant
             if (!user.getTenant().getId().equals(tenantId)) {
+                recordAuthentication(authenticationStartedAt, "tenant-mismatch");
+                authenticationRecorded = true;
                 forbidden(response, "Usuario no pertenece al tenant");
                 return;
             }
 
             // 🔹 Validar rol consistente
             if (!user.getRole().equals(roleFromToken)) {
+                recordAuthentication(authenticationStartedAt, "role-mismatch");
+                authenticationRecorded = true;
                 forbidden(response, "Rol inconsistente");
                 return;
             }
@@ -117,15 +134,28 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
             SecurityContextHolder.getContext().setAuthentication(authToken);
 
+            recordAuthentication(authenticationStartedAt, "authenticated");
+            authenticationRecorded = true;
+
             // 🔥 CLAVE: filterChain.doFilter DENTRO del mismo try
             filterChain.doFilter(request, response);
 
         } catch (Exception e) {
+            if (!authenticationRecorded) {
+                recordAuthentication(authenticationStartedAt, "error");
+            }
             forbidden(response, "Error de autenticación");
         } finally {
             // 🔹 Limpiar SIEMPRE al final
             TenantContext.clear();
         }
+    }
+
+    private void recordAuthentication(long startedAt, String outcome) {
+        meterRegistry.timer(
+                        "spacekids.security.jwt.authentication",
+                        "outcome", outcome)
+                .record(System.nanoTime() - startedAt, TimeUnit.NANOSECONDS);
     }
 
     private void forbidden(HttpServletResponse response, String message)

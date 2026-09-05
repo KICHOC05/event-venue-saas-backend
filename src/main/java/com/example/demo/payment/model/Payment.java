@@ -19,6 +19,10 @@ import java.util.UUID;
         @Index(name = "idx_payments_tenant_branch_created", columnList = "tenant_id,branch_id,created_at"),
         @Index(name = "idx_payments_tenant_method_created", columnList = "tenant_id,payment_method,created_at"),
         @Index(name = "idx_payments_order_created", columnList = "order_id,created_at")
+}, uniqueConstraints = {
+        @UniqueConstraint(
+                name = "uk_payments_tenant_order_checkout_request",
+                columnNames = {"tenant_id", "order_id", "checkout_request_id"})
 })
 public class Payment {
 
@@ -60,6 +64,9 @@ public class Payment {
 
     @Column
     private String reference;
+
+    @Column(name = "checkout_request_id", length = 100)
+    private String checkoutRequestId;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;

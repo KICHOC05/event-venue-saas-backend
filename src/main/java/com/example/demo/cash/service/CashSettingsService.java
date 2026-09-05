@@ -18,6 +18,8 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+import io.micrometer.core.annotation.Timed;
+
 @Service
 @RequiredArgsConstructor
 public class CashSettingsService {
@@ -27,6 +29,7 @@ public class CashSettingsService {
     private final BranchRepository branchRepository;
     private final UserRepository userRepository;
 
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "cash-settings", "operation", "get"})
     public CashSettingsResponse getSettings(Long tenantId, Long branchId) {
         CashSettings settings = cashSettingsRepository.findByBranch_Id(branchId)
                 .orElseGet(() -> createDefault(tenantId, branchId));

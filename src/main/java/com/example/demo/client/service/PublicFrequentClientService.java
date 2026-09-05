@@ -19,6 +19,8 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDateTime;
 import java.util.Locale;
 
+import io.micrometer.core.annotation.Timed;
+
 @Service
 @RequiredArgsConstructor
 public class PublicFrequentClientService {
@@ -31,6 +33,7 @@ public class PublicFrequentClientService {
     private final ClientRepository clientRepository;
 
     @Transactional
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "frequent-client", "operation", "register"})
     public PublicFrequentClientRegistrationResponse register(
             String tenantPublicId,
             PublicFrequentClientRegistrationRequest request) {

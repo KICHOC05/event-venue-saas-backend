@@ -39,6 +39,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -121,6 +122,11 @@ public class LoyaltyService {
 
     @Transactional
     public void registerVisits(Order order) {
+        registerVisits(order, null);
+    }
+
+    @Transactional
+    public void registerVisits(Order order, List<OrderItem> loadedItems) {
         if (order == null) {
             log.warn("LOYALTY_HOOK order=NULL decision=SKIP_NULL_ORDER");
             return;
@@ -129,53 +135,14 @@ public class LoyaltyService {
                 order.getPublicId(), order.getStatus(),
                 order.getClient() != null,
                 order.getClient() != null ? order.getClient().getId() : "N/A");
-        registerVisitsInternal(order);
+        registerVisitsInternal(order, loadedItems);
     }
 
-    private void registerVisitsInternal(Order order) {
+    private void registerVisitsInternal(Order order, List<OrderItem> loadedItems) {
         if (order == null) {
             log.warn("LOYALTY_AUDIT order=NULL decision=SKIP_NULL_ORDER");
             return;
         }
-
-        Long tenantId = order.getTenant() != null ? order.getTenant().getId() : null;
-        Long branchId = order.getBranch() != null ? order.getBranch().getId() : null;
-        boolean hasClient = order.getClient() != null;
-        Long clientId = hasClient ? order.getClient().getId() : null;
-        boolean clientFrequent = hasClient && Boolean.TRUE.equals(order.getClient().getFrequent());
-
-        final LoyaltyProgram program;
-        if (tenantId != null && branchId != null) {
-            program = programRepository
-                    .findByTenant_IdAndBranch_Id(tenantId, branchId)
-                    .orElse(null);
-        } else {
-            program = null;
-        }
-        boolean programFound = program != null;
-        boolean programActive = program != null && Boolean.TRUE.equals(program.getActive());
-        Long programId = program != null ? program.getId() : null;
-        Long qualifyingProductId = (program != null && program.getQualifyingProduct() != null)
-                ? program.getQualifyingProduct().getId()
-                : null;
-
-        List<OrderItem> allItems = orderItemRepository.findAllByOrder_Id(order.getId());
-        long qualifyingCount = (qualifyingProductId != null)
-                ? allItems.stream()
-                    .filter(i -> i.getProduct() != null)
-                    .filter(i -> i.getProduct().getId().equals(qualifyingProductId))
-                    .filter(i -> com.example.demo.common.enums.OrderItemStatus.ACTIVE.equals(i.getStatus()))
-                    .filter(i -> !Boolean.TRUE.equals(i.getRewardItem()))
-                    .filter(i -> i.getSubtotal() != null)
-                    .filter(i -> i.getSubtotal().compareTo(BigDecimal.ZERO) > 0)
-                    .count()
-                : 0;
-
-        log.info("LOYALTY_AUDIT order={} status={} tenantId={} branchId={} hasClient={} clientId={} clientFrequent={} programFound={} programActive={} programId={} qualifyingProductId={} totalItems={} qualifyingItems={}",
-                order.getPublicId(), order.getStatus(), tenantId, branchId,
-                hasClient, clientId, clientFrequent,
-                programFound, programActive, programId, qualifyingProductId,
-                allItems.size(), qualifyingCount);
 
         if (!com.example.demo.common.enums.OrderStatus.CLOSED.equals(order.getStatus())) {
             log.info("LOYALTY_DECISION order={} decision=SKIP_ORDER_NOT_CLOSED status={}",
@@ -183,73 +150,95 @@ public class LoyaltyService {
             return;
         }
 
-        if (!hasClient) {
+        if (order.getClient() == null) {
             log.info("LOYALTY_DECISION order={} decision=SKIP_NO_CLIENT", order.getPublicId());
             return;
         }
 
-        if (!clientFrequent) {
+        if (!Boolean.TRUE.equals(order.getClient().getFrequent())) {
             log.info("LOYALTY_DECISION order={} decision=SKIP_CLIENT_NOT_FREQUENT clientId={}",
-                    order.getPublicId(), clientId);
+                    order.getPublicId(), order.getClient().getId());
             return;
         }
 
-        if (!programFound) {
+        Long tenantId = order.getTenant() != null ? order.getTenant().getId() : null;
+        Long branchId = order.getBranch() != null ? order.getBranch().getId() : null;
+        if (tenantId == null || branchId == null) {
+            log.warn("LOYALTY_DECISION order={} decision=SKIP_MISSING_SCOPE", order.getPublicId());
+            return;
+        }
+
+        LoyaltyProgram program = programRepository
+                .findByTenant_IdAndBranch_Id(tenantId, branchId)
+                .orElse(null);
+        if (program == null) {
             log.warn("LOYALTY_DECISION order={} decision=SKIP_NO_ACTIVE_PROGRAM tenantId={} branchId={}",
                     order.getPublicId(), tenantId, branchId);
             return;
         }
 
-        if (!programActive) {
+        if (!Boolean.TRUE.equals(program.getActive())) {
             log.info("LOYALTY_DECISION order={} decision=SKIP_PROGRAM_NOT_ACTIVE programId={}",
-                    order.getPublicId(), programId);
+                    order.getPublicId(), program.getId());
             return;
         }
 
+        Long qualifyingProductId = program.getQualifyingProduct() != null
+                ? program.getQualifyingProduct().getId()
+                : null;
         if (qualifyingProductId == null) {
             log.warn("LOYALTY_DECISION order={} decision=SKIP_NO_QUALIFYING_PRODUCT programId={}",
-                    order.getPublicId(), programId);
+                    order.getPublicId(), program.getId());
             return;
         }
 
-        if (qualifyingCount == 0) {
+        List<OrderItem> allItems = loadedItems != null
+                ? loadedItems
+                : orderItemRepository.findAllByOrderIdWithProduct(order.getId());
+        List<OrderItem> qualifyingItems = allItems.stream()
+                .filter(i -> i.getProduct() != null)
+                .filter(i -> i.getProduct().getId().equals(qualifyingProductId))
+                .filter(i -> com.example.demo.common.enums.OrderItemStatus.ACTIVE.equals(i.getStatus()))
+                .filter(i -> !Boolean.TRUE.equals(i.getRewardItem()))
+                .filter(i -> i.getSubtotal() != null)
+                .filter(i -> i.getSubtotal().compareTo(BigDecimal.ZERO) > 0)
+                .toList();
+
+        log.info("LOYALTY_AUDIT order={} status={} tenantId={} branchId={} clientId={} programId={} qualifyingProductId={} totalItems={} qualifyingItems={}",
+                order.getPublicId(), order.getStatus(), tenantId, branchId,
+                order.getClient().getId(), program.getId(), qualifyingProductId,
+                allItems.size(), qualifyingItems.size());
+
+        if (qualifyingItems.isEmpty()) {
             log.info("LOYALTY_DECISION order={} decision=SKIP_NO_QUALIFYING_ITEMS totalItems={}",
                     order.getPublicId(), allItems.size());
             return;
         }
 
         Client client = order.getClient();
+        Set<Long> visitedItemIds = visitRepository.findVisitedOrderItemIds(order.getId());
         int visitsCreated = 0;
-        for (OrderItem item : allItems) {
-            boolean matches = item.getProduct() != null
-                    && item.getProduct().getId().equals(qualifyingProductId)
-                    && com.example.demo.common.enums.OrderItemStatus.ACTIVE.equals(item.getStatus())
-                    && !Boolean.TRUE.equals(item.getRewardItem())
-                    && item.getSubtotal() != null
-                    && item.getSubtotal().compareTo(BigDecimal.ZERO) > 0;
-
-            if (matches) {
-                if (visitRepository.existsByOrderItem_Id(item.getId())) {
-                    log.info("LOYALTY_DECISION order={} decision=SKIP_DUPLICATE itemId={}",
-                            order.getPublicId(), item.getPublicId());
-                    continue;
-                }
-
-                ClientLoyaltyVisit visit = new ClientLoyaltyVisit();
-                visit.setTenant(order.getTenant());
-                visit.setBranch(order.getBranch());
-                visit.setClient(client);
-                visit.setLoyaltyProgram(program);
-                visit.setOrder(order);
-                visit.setOrderItem(item);
-                visit.setVisitDate(LocalDateTime.now());
-                visit.setQualifying(true);
-
-                visitRepository.save(visit);
-                visitsCreated++;
-                log.info("LOYALTY_DECISION order={} decision=CREATE_VISIT item={} product={}",
-                        order.getPublicId(), item.getPublicId(), item.getProduct().getName());
+        for (OrderItem item : qualifyingItems) {
+            if (visitedItemIds.contains(item.getId())) {
+                log.info("LOYALTY_DECISION order={} decision=SKIP_DUPLICATE itemId={}",
+                        order.getPublicId(), item.getPublicId());
+                continue;
             }
+
+            ClientLoyaltyVisit visit = new ClientLoyaltyVisit();
+            visit.setTenant(order.getTenant());
+            visit.setBranch(order.getBranch());
+            visit.setClient(client);
+            visit.setLoyaltyProgram(program);
+            visit.setOrder(order);
+            visit.setOrderItem(item);
+            visit.setVisitDate(LocalDateTime.now());
+            visit.setQualifying(true);
+
+            visitRepository.save(visit);
+            visitsCreated++;
+            log.info("LOYALTY_DECISION order={} decision=CREATE_VISIT item={} product={}",
+                    order.getPublicId(), item.getPublicId(), item.getProduct().getName());
         }
 
         if (visitsCreated > 0) {

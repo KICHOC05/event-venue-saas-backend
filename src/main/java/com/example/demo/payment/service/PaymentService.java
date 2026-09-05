@@ -1,7 +1,7 @@
 package com.example.demo.payment.service;
 
-import com.example.demo.branch.model.Branch;
-import com.example.demo.branch.repository.BranchRepository;
+import com.example.demo.cash.repository.CashRegisterRepository;
+import com.example.demo.common.enums.CashStatus;
 import com.example.demo.common.enums.OrderStatus;
 import com.example.demo.common.enums.PaymentMethod;
 import com.example.demo.order.model.Order;
@@ -11,8 +11,6 @@ import com.example.demo.payment.dto.PaymentResponse;
 import com.example.demo.payment.model.Payment;
 import com.example.demo.payment.repository.PaymentRepository;
 import com.example.demo.security.TenantContext;
-import com.example.demo.tenant.model.Tenant;
-import com.example.demo.tenant.repository.TenantRepository;
 import com.example.demo.user.model.User;
 import com.example.demo.user.repository.UserRepository;
 
@@ -23,25 +21,51 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 
+import io.micrometer.core.annotation.Timed;
+
 @Service
 @RequiredArgsConstructor
 public class PaymentService {
 
     private final PaymentRepository paymentRepository;
     private final OrderRepository orderRepository;
-    private final TenantRepository tenantRepository;
-    private final BranchRepository branchRepository;
     private final UserRepository userRepository;
+    private final CashRegisterRepository cashRegisterRepository;
 
     @Transactional
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "payment", "operation", "register-order-payment"})
     public PaymentResponse registerPayment(String orderPublicId, PaymentRequest request) {
 
         Long tenantId = TenantContext.getTenantId();
         Long branchId = TenantContext.getBranchId();
         Long userId = TenantContext.getUserId();
 
-        Order order = orderRepository.findByPublicIdAndTenant_Id(orderPublicId, tenantId)
+        Order order = orderRepository
+                .findByPublicIdAndTenant_IdAndBranch_Id(orderPublicId, tenantId, branchId)
                 .orElseThrow(() -> new EntityNotFoundException("Orden no encontrada"));
+
+        BigDecimal totalPaidBefore = paymentRepository.sumPaymentsByOrderId(order.getId());
+        if (totalPaidBefore == null) {
+            totalPaidBefore = BigDecimal.ZERO;
+        }
+
+        return applyPayment(order, request, null, totalPaidBefore, tenantId, branchId, userId).response();
+    }
+
+    /**
+     * Shared payment implementation used by the legacy endpoint and transactional checkout.
+     * The caller owns the surrounding transaction and supplies the already-known paid total.
+     */
+    public PaymentApplication applyPayment(
+            Order order,
+            PaymentRequest request,
+            String checkoutRequestId,
+            BigDecimal totalPaidBefore,
+            Long tenantId,
+            Long branchId,
+            Long userId) {
+
+        validateRequest(request);
 
         if (order.getStatus() == OrderStatus.CLOSED) {
             throw new IllegalStateException("La orden ya está cerrada");
@@ -50,9 +74,8 @@ public class PaymentService {
             throw new IllegalStateException("La orden está cancelada");
         }
 
-        BigDecimal totalPaidBefore = paymentRepository.sumPaymentsByOrderId(order.getId());
-        if (totalPaidBefore == null)
-            totalPaidBefore = BigDecimal.ZERO;
+        cashRegisterRepository.findByTenant_IdAndBranch_IdAndStatus(tenantId, branchId, CashStatus.OPEN)
+                .orElseThrow(() -> new IllegalStateException("No hay una caja abierta para registrar el pago"));
 
         BigDecimal remaining = order.getTotalAmount().subtract(totalPaidBefore);
 
@@ -80,43 +103,37 @@ public class PaymentService {
             amountToApply = amountReceived;
         }
 
-        Tenant tenant = tenantRepository.findById(tenantId)
-                .orElseThrow(() -> new EntityNotFoundException("Tenant not found"));
-        Branch branch = branchRepository.findById(branchId)
-                .orElseThrow(() -> new EntityNotFoundException("Branch not found"));
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new EntityNotFoundException("User not found"));
+        User user = order.getUser() != null && userId.equals(order.getUser().getId())
+                ? order.getUser()
+                : userRepository.findByIdAndTenant_IdAndBranch_Id(userId, tenantId, branchId)
+                        .orElseThrow(() -> new EntityNotFoundException("User not found"));
 
         Payment payment = new Payment();
         payment.setOrder(order);
-        payment.setTenant(tenant);
-        payment.setBranch(branch);
+        payment.setTenant(order.getTenant());
+        payment.setBranch(order.getBranch());
         payment.setUser(user);
 
         payment.setAmount(amountToApply);
 
-        // NUEVO
         payment.setAmountReceived(amountReceived);
         payment.setChangeAmount(change);
 
         payment.setPaymentMethod(request.getPaymentMethod());
         payment.setReference(request.getReference());
+        payment.setCheckoutRequestId(checkoutRequestId);
 
         paymentRepository.save(payment);
 
         BigDecimal totalPaidAfter = totalPaidBefore.add(amountToApply);
         BigDecimal newRemaining = order.getTotalAmount().subtract(totalPaidAfter);
 
-        // ✅ SOLO marcar como PARTIALLY_PAID, NO cerrar aquí
-        // El frontend se encarga de llamar closeOrder() después
         if (newRemaining.compareTo(BigDecimal.ZERO) > 0) {
             order.setStatus(OrderStatus.PARTIALLY_PAID);
         }
-        // Si newRemaining <= 0, dejamos el status actual (OPEN o PARTIALLY_PAID)
-        // para que closeOrder() lo cierre correctamente
         orderRepository.save(order);
 
-        return PaymentResponse.builder()
+        PaymentResponse response = PaymentResponse.builder()
                 .orderTotal(order.getTotalAmount())
                 .totalPaid(totalPaidAfter)
                 .remainingAmount(newRemaining.max(BigDecimal.ZERO))
@@ -125,5 +142,45 @@ public class PaymentService {
                 .amountApplied(amountToApply)
                 .paymentMethod(request.getPaymentMethod().name())
                 .build();
+
+        return new PaymentApplication(payment, response, totalPaidAfter);
+    }
+
+    public PaymentResponse buildExistingPaymentResponse(
+            Order order, Payment payment, BigDecimal totalPaid) {
+        BigDecimal amountReceived = payment.getAmountReceived() != null
+                ? payment.getAmountReceived()
+                : payment.getAmount();
+        BigDecimal change = payment.getChangeAmount() != null
+                ? payment.getChangeAmount()
+                : BigDecimal.ZERO;
+
+        return PaymentResponse.builder()
+                .orderTotal(order.getTotalAmount())
+                .totalPaid(totalPaid)
+                .remainingAmount(order.getTotalAmount().subtract(totalPaid).max(BigDecimal.ZERO))
+                .change(change)
+                .amountReceived(amountReceived)
+                .amountApplied(payment.getAmount())
+                .paymentMethod(payment.getPaymentMethod().name())
+                .build();
+    }
+
+    private void validateRequest(PaymentRequest request) {
+        if (request == null || request.getAmount() == null) {
+            throw new IllegalArgumentException("El monto es obligatorio");
+        }
+        if (request.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("El monto debe ser mayor que cero");
+        }
+        if (request.getPaymentMethod() == null) {
+            throw new IllegalArgumentException("El método de pago es obligatorio");
+        }
+    }
+
+    public record PaymentApplication(
+            Payment payment,
+            PaymentResponse response,
+            BigDecimal totalPaidAfter) {
     }
 }

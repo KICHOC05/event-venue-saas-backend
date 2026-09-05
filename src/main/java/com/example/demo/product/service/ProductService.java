@@ -15,6 +15,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+import io.micrometer.core.annotation.Timed;
+
 @Service
 @RequiredArgsConstructor
 public class ProductService {
@@ -46,6 +48,7 @@ public class ProductService {
         return mapToResponse(product);
     }
 
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "product", "operation", "list-for-pos"})
     public List<ProductResponse> findAll() {
         Long tenantId = TenantContext.getTenantId();
         return productRepository.findAllByTenant_Id(tenantId)

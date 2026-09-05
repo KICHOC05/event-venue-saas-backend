@@ -19,6 +19,8 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import io.micrometer.core.annotation.Timed;
+
 @Service
 @RequiredArgsConstructor
 public class TimerService {
@@ -29,6 +31,7 @@ public class TimerService {
     // ACTIVE SESSIONS
     // =========================
 
+   @Timed(value = "spacekids.service.requests", extraTags = {"service", "timer", "operation", "active"})
    public List<ActiveSessionResponse> getActiveSessions() {
 
     Long tenantId = TenantContext.getTenantId();
@@ -48,6 +51,7 @@ public class TimerService {
     // SESSION HISTORY
     // =========================
 
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "timer", "operation", "history"})
     public Page<TimerHistoryResponse> getSessionHistory(
             String search,
             String status,
@@ -97,6 +101,7 @@ public class TimerService {
         return items.map(this::mapToHistoryResponse);
     }
 
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "timer", "operation", "dashboard"})
     public TimerDashboardResponse getTimersDashboard() {
 
     Long tenantId = TenantContext.getTenantId();

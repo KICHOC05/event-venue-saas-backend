@@ -1,6 +1,7 @@
 package com.example.demo.cash.repository;
 
 import com.example.demo.cash.model.CashMovement;
+import com.example.demo.cash.repository.projection.CashMovementTotalsProjection;
 import com.example.demo.common.enums.CashMovementType;
 
 import org.springframework.data.domain.Page;
@@ -10,7 +11,6 @@ import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -26,16 +26,22 @@ public interface CashMovementRepository extends JpaRepository<CashMovement, Long
 
     List<CashMovement> findByCashRegister_IdOrderByCreatedAtDesc(Long cashRegisterId);
 
-    @Query("""
-                SELECT COALESCE(SUM(cm.amount), 0)
-                FROM CashMovement cm
-                WHERE cm.cashRegister.id = :cashRegisterId
-                  AND cm.type = :type
-                  AND cm.voided = false
-            """)
-    BigDecimal sumByCashRegisterAndType(
-            @Param("cashRegisterId") Long cashRegisterId,
-            @Param("type") CashMovementType type);
+    @Query(value = """
+            SELECT
+                COALESCE(SUM(CASE WHEN cm.type = 'DEPOSIT' THEN cm.amount ELSE 0 END), 0)
+                    AS depositTotal,
+                COALESCE(SUM(CASE WHEN cm.type = 'WITHDRAWAL' THEN cm.amount ELSE 0 END), 0)
+                    AS withdrawalTotal
+            FROM cash_movements cm
+            WHERE cm.tenant_id = :tenantId
+              AND cm.branch_id = :branchId
+              AND cm.cash_register_id = :cashRegisterId
+              AND cm.voided = false
+            """, nativeQuery = true)
+    CashMovementTotalsProjection sumMovementTotals(
+            @Param("tenantId") Long tenantId,
+            @Param("branchId") Long branchId,
+            @Param("cashRegisterId") Long cashRegisterId);
 
     long countByCashRegister_Id(Long cashRegisterId);
 

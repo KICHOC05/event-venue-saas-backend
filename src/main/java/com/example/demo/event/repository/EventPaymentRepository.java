@@ -30,17 +30,6 @@ public interface EventPaymentRepository extends JpaRepository<EventPayment, Long
             String eventPublicId, Long tenantId
     );
 
-    @Query("""
-        SELECT COALESCE(SUM(p.amount), 0)
-        FROM EventPayment p
-        WHERE p.cashRegister.id = :cashRegisterId
-          AND p.paymentMethod = :paymentMethod
-    """)
-    java.math.BigDecimal sumByCashRegisterAndPaymentMethod(
-            @Param("cashRegisterId") Long cashRegisterId,
-            @Param("paymentMethod") PaymentMethod paymentMethod
-    );
-
     @EntityGraph(attributePaths = {"eventBooking", "branch", "cashRegister"})
     @Query("""
         SELECT p FROM EventPayment p

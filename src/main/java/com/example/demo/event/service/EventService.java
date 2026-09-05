@@ -46,6 +46,8 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 
+import io.micrometer.core.annotation.Timed;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -218,6 +220,7 @@ public class EventService {
     // =====================================================
 
     @Transactional
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "event", "operation", "create"})
     public EventResponse createEvent(CreateEventRequest request) {
         Long tenantId = TenantContext.getTenantId();
         Long branchId = TenantContext.getBranchId();
@@ -343,6 +346,7 @@ public class EventService {
     }
 
     @Transactional(readOnly = true)
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "event", "operation", "list"})
     public List<EventResponse> getEvents() {
         Long tenantId = TenantContext.getTenantId();
 
@@ -698,6 +702,7 @@ public class EventService {
     }
 
     @Transactional(readOnly = true)
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "event", "operation", "calendar"})
     public List<EventCalendarResponse> getCalendar(LocalDate from, LocalDate to) {
         Long tenantId = TenantContext.getTenantId();
         
@@ -715,6 +720,7 @@ public class EventService {
     }
 
     @Transactional(readOnly = true)
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "event", "operation", "availability"})
     public AvailabilityResponse checkAvailability(LocalDate date, LocalTime start, LocalTime end,
                                                    String excludePublicId) {
         Long tenantId = TenantContext.getTenantId();
@@ -759,6 +765,7 @@ public class EventService {
     // =====================================================
 
     @Transactional
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "event", "operation", "register-payment"})
     public EventPaymentResponse registerEventPayment(String eventPublicId, RegisterEventPaymentRequest request) {
         Long tenantId = TenantContext.getTenantId();
         Long branchId = TenantContext.getBranchId();
@@ -853,6 +860,7 @@ public class EventService {
     }
 
     @Transactional(readOnly = true)
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "event", "operation", "list-payments"})
     public List<EventPaymentResponse> getEventPayments(String eventPublicId) {
         Long tenantId = TenantContext.getTenantId();
 

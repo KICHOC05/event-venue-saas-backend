@@ -18,12 +18,20 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
 
     List<OrderItem> findAllByOrder_Id(Long orderId);
 
+    @Query("SELECT oi FROM OrderItem oi JOIN FETCH oi.product WHERE oi.order.id = :orderId")
+    List<OrderItem> findAllByOrderIdWithProduct(@Param("orderId") Long orderId);
+
     @Query("SELECT oi FROM OrderItem oi JOIN FETCH oi.product WHERE oi.order.id IN :orderIds")
     List<OrderItem> findAllByOrderIdsWithProduct(@Param("orderIds") List<Long> orderIds);
 
     Optional<OrderItem> findByPublicId(String publicId);
 
     Optional<OrderItem> findByPublicIdAndOrder_PublicId(String publicId, String orderPublicId);
+
+    @Query("SELECT oi FROM OrderItem oi JOIN FETCH oi.product WHERE oi.publicId = :publicId AND oi.order.id = :orderId")
+    Optional<OrderItem> findByPublicIdAndOrderIdWithProduct(
+            @Param("publicId") String publicId,
+            @Param("orderId") Long orderId);
 
     @Query("""
                 SELECT oi.product.publicId, oi.product.name,

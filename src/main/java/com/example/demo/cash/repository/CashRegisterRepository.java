@@ -1,6 +1,7 @@
 package com.example.demo.cash.repository;
 
 import com.example.demo.cash.model.CashRegister;
+import com.example.demo.cash.repository.projection.CashPaymentTotalsProjection;
 import com.example.demo.common.enums.CashStatus;
 
 import jakarta.persistence.LockModeType;
@@ -22,6 +23,50 @@ public interface CashRegisterRepository extends JpaRepository<CashRegister, Long
             String publicId, Long tenantId, Long branchId);
 
     Optional<CashRegister> findByBranch_IdAndStatus(Long branchId, CashStatus status);
+
+    Optional<CashRegister> findByTenant_IdAndBranch_IdAndStatus(
+            Long tenantId, Long branchId, CashStatus status);
+
+    @Query(value = """
+        SELECT
+            COALESCE(SUM(CASE WHEN totals.payment_source = 'POS'
+                AND totals.payment_method = 'CASH' THEN totals.amount ELSE 0 END), 0)
+                AS posCashSales,
+            COALESCE(SUM(CASE WHEN totals.payment_source = 'POS'
+                AND totals.payment_method = 'CARD' THEN totals.amount ELSE 0 END), 0)
+                AS posCardSales,
+            COALESCE(SUM(CASE WHEN totals.payment_source = 'POS'
+                AND totals.payment_method = 'TRANSFER' THEN totals.amount ELSE 0 END), 0)
+                AS posTransferSales,
+            COALESCE(SUM(CASE WHEN totals.payment_source = 'EVENT'
+                AND totals.payment_method = 'CASH' THEN totals.amount ELSE 0 END), 0)
+                AS eventCashPayments,
+            COALESCE(SUM(CASE WHEN totals.payment_source = 'EVENT'
+                AND totals.payment_method = 'CARD' THEN totals.amount ELSE 0 END), 0)
+                AS eventCardPayments,
+            COALESCE(SUM(CASE WHEN totals.payment_source = 'EVENT'
+                AND totals.payment_method = 'TRANSFER' THEN totals.amount ELSE 0 END), 0)
+                AS eventTransferPayments
+        FROM (
+            SELECT 'POS' AS payment_source, p.payment_method, p.amount
+            FROM payments p
+            WHERE p.tenant_id = :tenantId
+              AND p.branch_id = :branchId
+              AND p.created_at BETWEEN :start AND :end
+            UNION ALL
+            SELECT 'EVENT' AS payment_source, ep.payment_method, ep.amount
+            FROM event_payments ep
+            WHERE ep.tenant_id = :tenantId
+              AND ep.branch_id = :branchId
+              AND ep.cash_register_id = :cashRegisterId
+        ) totals
+        """, nativeQuery = true)
+    CashPaymentTotalsProjection sumPaymentTotals(
+            @Param("tenantId") Long tenantId,
+            @Param("branchId") Long branchId,
+            @Param("cashRegisterId") Long cashRegisterId,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""

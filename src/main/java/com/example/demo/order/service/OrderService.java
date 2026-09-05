@@ -16,6 +16,7 @@ import com.example.demo.order.repository.OrderItemRepository;
 import com.example.demo.order.repository.OrderRepository;
 import com.example.demo.payment.model.Payment;
 import com.example.demo.payment.repository.PaymentRepository;
+import com.example.demo.payment.service.PaymentService;
 import com.example.demo.product.model.Product;
 import com.example.demo.product.repository.ProductRepository;
 import com.example.demo.settings.model.TaxSettings;
@@ -48,6 +49,8 @@ import java.time.LocalTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import io.micrometer.core.annotation.Timed;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -62,11 +65,14 @@ public class OrderService {
     private final UserRepository userRepository;
 
     private final PaymentRepository paymentRepository;
+    private final PaymentService paymentService;
     private final ClientRepository clientRepository;
     private final LoyaltyService loyaltyService;
     private final TaxSettingsRepository taxSettingsRepository;
     private final TenantSettingsRepository tenantSettingsRepository;
 
+    @Transactional
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "order", "operation", "create"})
     public OrderResponse createOrder(OrderCreateRequest request) {
 
         Long tenantId = TenantContext.getTenantId();
@@ -76,10 +82,10 @@ public class OrderService {
         Tenant tenant = tenantRepository.findById(tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Tenant not found"));
 
-        Branch branch = branchRepository.findById(branchId)
+        Branch branch = branchRepository.findByIdAndTenant_Id(branchId, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Branch not found"));
 
-        User user = userRepository.findById(userId)
+        User user = userRepository.findByIdAndTenant_IdAndBranch_Id(userId, tenantId, branchId)
                 .orElseThrow(() -> new EntityNotFoundException("User not found"));
 
         Order order = new Order();
@@ -107,15 +113,36 @@ public class OrderService {
 
         orderRepository.save(order);
 
-        return mapToResponse(order);
+        if (request.getInitialItem() != null) {
+            addItemInternal(order, tenantId, request.getInitialItem());
+            return recalculateAndMap(order, List.of());
+        }
+
+        return mapToResponse(order, List.of(), List.of());
     }
 
     @Transactional
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "order", "operation", "add-item"})
     public OrderResponse addItem(String orderPublicId, OrderItemRequest request) {
 
         Long tenantId = TenantContext.getTenantId();
 
         Order order = getOrderEntity(orderPublicId, tenantId);
+        ensureOrderIsOpen(order);
+
+        addItemInternal(order, tenantId, request);
+
+        return recalculateAndMap(order);
+    }
+
+    private void addItemInternal(Order order, Long tenantId, OrderItemRequest request) {
+
+        if (request == null || !StringUtils.hasText(request.getProductPublicId())) {
+            throw new IllegalStateException("Debe seleccionar un producto");
+        }
+        if (request.getQuantity() == null || request.getQuantity() <= 0) {
+            throw new IllegalStateException("La cantidad debe ser mayor a 0");
+        }
 
         Product product = productRepository
                 .findByPublicIdAndTenant_IdAndActiveTrue(
@@ -203,28 +230,20 @@ public class OrderService {
             productRepository.save(product);
 
         }
-
-        recalculateOrder(order);
-
-        return getOrder(orderPublicId);
     }
 
     @Transactional
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "order", "operation", "void-item"})
     public OrderResponse voidItem(String orderPublicId, String itemPublicId) {
 
         Long tenantId = TenantContext.getTenantId();
 
         Order order = getOrderEntity(orderPublicId, tenantId);
+        ensureOrderIsOpen(order);
 
         OrderItem item = orderItemRepository
-                .findByPublicId(itemPublicId)
+                .findByPublicIdAndOrderIdWithProduct(itemPublicId, order.getId())
                 .orElseThrow(() -> new EntityNotFoundException("Item not found"));
-
-        if (!item.getOrder().getPublicId().equals(orderPublicId)) {
-
-            throw new IllegalStateException("El item no pertenece a esta orden");
-
-        }
 
         if (item.getStatus() == OrderItemStatus.VOIDED) {
 
@@ -245,12 +264,11 @@ public class OrderService {
 
         orderItemRepository.save(item);
 
-        recalculateOrder(order);
-
-        return getOrder(orderPublicId);
+        return recalculateAndMap(order);
     }
 
     @Transactional
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "order", "operation", "update-item-quantity"})
     public OrderResponse updateItemQuantity(
             String orderPublicId,
             String itemPublicId,
@@ -259,10 +277,15 @@ public class OrderService {
         Long tenantId = TenantContext.getTenantId();
 
         Order order = getOrderEntity(orderPublicId, tenantId);
+        ensureOrderIsOpen(order);
 
         OrderItem item = orderItemRepository
-                .findByPublicId(itemPublicId)
+                .findByPublicIdAndOrderIdWithProduct(itemPublicId, order.getId())
                 .orElseThrow(() -> new EntityNotFoundException("Item not found"));
+
+        if (item.getStatus() != OrderItemStatus.ACTIVE) {
+            throw new IllegalStateException("No se puede modificar un item anulado");
+        }
 
         Product product = item.getProduct();
 
@@ -291,12 +314,11 @@ public class OrderService {
 
         orderItemRepository.save(item);
 
-        recalculateOrder(order);
-
-        return getOrder(orderPublicId);
+        return recalculateAndMap(order);
     }
 
     @Transactional
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "order", "operation", "close"})
     public OrderResponse closeOrder(String publicId) {
 
         Long tenantId = TenantContext.getTenantId();
@@ -306,37 +328,127 @@ public class OrderService {
                 order.getPublicId(), order.getStatus(),
                 order.getClient() != null, order.getTotalAmount());
 
-        if (order.getStatus() == OrderStatus.CLOSED) {
-            log.info("closeOrder SKIP: order {} already CLOSED", order.getPublicId());
-            return mapToResponse(order);
-        }
-
         if (order.getStatus() == OrderStatus.CANCELLED) {
             throw new IllegalStateException("No se puede cerrar una orden cancelada");
         }
 
-        BigDecimal paid = paymentRepository.sumPaymentsByOrderId(order.getId());
-        if (paid == null)
-            paid = BigDecimal.ZERO;
+        List<OrderItem> items = loadItems(order);
+        List<Payment> payments = loadPayments(order);
 
+        if (order.getStatus() == OrderStatus.CLOSED) {
+            log.info("closeOrder SKIP: order {} already CLOSED", order.getPublicId());
+            return mapToResponse(order, items, payments);
+        }
+
+        BigDecimal paid = sumPayments(payments);
+        closeOrderInternal(order, paid, items);
+
+        return mapToResponse(order, items, payments);
+    }
+
+    @Transactional
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "order", "operation", "checkout"})
+    public CheckoutResponse checkout(String publicId, CheckoutRequest request) {
+        if (request == null || !StringUtils.hasText(request.getRequestId())) {
+            throw new IllegalArgumentException("El identificador del checkout es obligatorio");
+        }
+        if (request.getPayment() == null) {
+            throw new IllegalArgumentException("El pago es obligatorio");
+        }
+        if (request.getRequestId().trim().length() > 100) {
+            throw new IllegalArgumentException("El identificador del checkout no puede superar 100 caracteres");
+        }
+
+        Long tenantId = TenantContext.getTenantId();
+        Long branchId = TenantContext.getBranchId();
+        Long userId = TenantContext.getUserId();
+        String requestId = request.getRequestId().trim();
+
+        Order order = orderRepository
+                .findForCheckoutForUpdate(publicId, tenantId, branchId)
+                .orElseThrow(() -> new EntityNotFoundException("Order not found"));
+
+        List<Payment> payments = loadPayments(order);
+        BigDecimal totalPaidBefore = sumPayments(payments);
+
+        Optional<Payment> existingPayment = payments.stream()
+                .filter(payment -> requestId.equals(payment.getCheckoutRequestId()))
+                .findFirst();
+
+        if (existingPayment.isPresent()) {
+            if (!matchesCheckoutPayment(existingPayment.get(), request.getPayment())) {
+                throw new IllegalArgumentException(
+                        "El identificador del checkout ya fue utilizado con otro pago");
+            }
+            List<OrderItem> items = loadItems(order);
+            return CheckoutResponse.builder()
+                    .order(mapToResponse(order, items, payments))
+                    .payment(paymentService.buildExistingPaymentResponse(
+                            order, existingPayment.get(), totalPaidBefore))
+                    .closed(order.getStatus() == OrderStatus.CLOSED)
+                    .build();
+        }
+
+        PaymentService.PaymentApplication applied = paymentService.applyPayment(
+                order,
+                request.getPayment(),
+                requestId,
+                totalPaidBefore,
+                tenantId,
+                branchId,
+                userId);
+
+        payments.add(applied.payment());
+        List<OrderItem> items = loadItems(order);
+
+        if (applied.response().getRemainingAmount().compareTo(BigDecimal.ZERO) == 0) {
+            closeOrderInternal(order, applied.totalPaidAfter(), items);
+        }
+
+        return CheckoutResponse.builder()
+                .order(mapToResponse(order, items, payments))
+                .payment(applied.response())
+                .closed(order.getStatus() == OrderStatus.CLOSED)
+                .build();
+    }
+
+    private void closeOrderInternal(Order order, BigDecimal paid, List<OrderItem> items) {
+        if (order.getStatus() == OrderStatus.CANCELLED) {
+            throw new IllegalStateException("No se puede cerrar una orden cancelada");
+        }
+        if (order.getStatus() == OrderStatus.CLOSED) {
+            return;
+        }
         if (paid.compareTo(order.getTotalAmount()) < 0) {
             throw new IllegalStateException("Pago incompleto");
         }
 
         order.setStatus(OrderStatus.CLOSED);
         order.setClosedAt(LocalDateTime.now());
-
         orderRepository.save(order);
 
         log.info("closeOrder: order {} closed, registering loyalty visits...", order.getPublicId());
+        loyaltyService.registerVisits(order, items);
+    }
 
-        try {
-            loyaltyService.registerVisits(order);
-        } catch (Exception e) {
-            log.warn("Error registering loyalty visits for order {}: {}", order.getPublicId(), e.getMessage(), e);
-        }
+    private BigDecimal sumPayments(List<Payment> payments) {
+        return payments.stream()
+                .map(Payment::getAmount)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
 
-        return mapToResponse(order);
+    private boolean matchesCheckoutPayment(Payment payment, com.example.demo.payment.dto.PaymentRequest request) {
+        BigDecimal received = payment.getAmountReceived() != null
+                ? payment.getAmountReceived()
+                : payment.getAmount();
+        String savedReference = StringUtils.hasText(payment.getReference()) ? payment.getReference().trim() : null;
+        String requestReference = StringUtils.hasText(request.getReference()) ? request.getReference().trim() : null;
+
+        return request.getAmount() != null
+                && received.compareTo(request.getAmount()) == 0
+                && payment.getPaymentMethod() == request.getPaymentMethod()
+                && Objects.equals(savedReference, requestReference);
     }
 
     @Transactional
@@ -346,7 +458,7 @@ public class OrderService {
 
         Order order = getOrderEntity(publicId, tenantId);
 
-        List<OrderItem> items = orderItemRepository.findAllByOrder_Id(order.getId());
+        List<OrderItem> items = loadItems(order);
 
         for (OrderItem item : items) {
 
@@ -367,26 +479,59 @@ public class OrderService {
 
         orderRepository.save(order);
 
-        return mapToResponse(order);
+        return mapToResponse(order, items, loadPayments(order));
     }
 
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "order", "operation", "get"})
+    @Transactional(readOnly = true)
     public OrderResponse getOrder(String publicId) {
 
         Long tenantId = TenantContext.getTenantId();
 
         Order order = getOrderEntity(publicId, tenantId);
 
-        return mapToResponse(order);
+        return loadAndMap(order);
     }
 
     private Order getOrderEntity(String publicId, Long tenantId) {
 
+        Long branchId = TenantContext.getBranchId();
+
         return orderRepository
-                .findByPublicIdAndTenant_Id(publicId, tenantId)
+                .findByPublicIdAndTenant_IdAndBranch_Id(publicId, tenantId, branchId)
                 .orElseThrow(() -> new EntityNotFoundException("Order not found"));
     }
 
-    private void recalculateOrder(Order order) {
+    private OrderResponse recalculateAndMap(Order order) {
+
+        return recalculateAndMap(order, null);
+    }
+
+    private OrderResponse recalculateAndMap(Order order, List<Payment> payments) {
+
+        List<OrderItem> items = loadItems(order);
+        recalculateOrder(order, items);
+        List<Payment> responsePayments = payments != null ? payments : loadPayments(order);
+
+        return mapToResponse(order, items, responsePayments);
+    }
+
+    private OrderResponse loadAndMap(Order order) {
+
+        List<OrderItem> items = loadItems(order);
+
+        return mapToResponse(order, items, loadPayments(order));
+    }
+
+    private List<OrderItem> loadItems(Order order) {
+        return orderItemRepository.findAllByOrderIdWithProduct(order.getId());
+    }
+
+    private List<Payment> loadPayments(Order order) {
+        return paymentRepository.findAllByOrder_IdOrderByCreatedAtAscIdAsc(order.getId());
+    }
+
+    private void recalculateOrder(Order order, List<OrderItem> items) {
 
         Long tenantId = TenantContext.getTenantId();
 
@@ -394,9 +539,7 @@ public class OrderService {
                 .findByTenant_Id(tenantId)
                 .orElse(null);
 
-        BigDecimal subtotal = orderItemRepository
-                .findAllByOrder_Id(order.getId())
-                .stream()
+        BigDecimal subtotal = items.stream()
                 .filter(item -> item.getStatus() == OrderItemStatus.ACTIVE)
                 .map(OrderItem::getSubtotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -415,13 +558,21 @@ public class OrderService {
         order.setTax(tax);
         order.setTotalAmount(total);
 
-        orderRepository.save(order);
     }
 
-    private OrderResponse mapToResponse(Order order) {
+    private void ensureOrderIsOpen(Order order) {
+        if (order.getStatus() == OrderStatus.CLOSED) {
+            throw new IllegalStateException("No se puede modificar una orden cerrada");
+        }
+        if (order.getStatus() == OrderStatus.CANCELLED) {
+            throw new IllegalStateException("No se puede modificar una orden cancelada");
+        }
+    }
 
-        List<OrderItem> allItems = orderItemRepository
-                .findAllByOrder_Id(order.getId());
+    private OrderResponse mapToResponse(
+            Order order,
+            List<OrderItem> allItems,
+            List<Payment> payments) {
 
         List<OrderItemResponse> items = allItems
                 .stream()
@@ -472,7 +623,6 @@ public class OrderService {
         response.setBranchPublicId(order.getBranch().getPublicId());
         response.setBranchName(order.getBranch().getName());
 
-        List<Payment> payments = paymentRepository.findAllByOrder_IdOrderByCreatedAtAscIdAsc(order.getId());
         List<String> paymentMethods = payments.stream()
                 .map(Payment::getPaymentMethod)
                 .map(method -> switch (method) {
@@ -516,6 +666,7 @@ public class OrderService {
     }
 
     @Transactional(readOnly = true)
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "order", "operation", "history"})
     public Page<OrderHistoryResponse> getOrderHistory(
             int page, int size,
             String search, String orderNumber, String status,

@@ -97,42 +97,6 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             @Param("startInclusive") LocalDateTime startInclusive,
             @Param("endExclusive") LocalDateTime endExclusive);
 
-    @Query("""
-                SELECT COALESCE(SUM(p.amount), 0)
-                FROM Payment p
-                WHERE p.branch.id = :branchId
-                  AND p.paymentMethod = com.example.demo.common.enums.PaymentMethod.CASH
-                  AND p.createdAt BETWEEN :start AND :end
-            """)
-    BigDecimal sumCashPayments(
-            @Param("branchId") Long branchId,
-            @Param("start") LocalDateTime start,
-            @Param("end") LocalDateTime end);
-
-    @Query("""
-                SELECT COALESCE(SUM(p.amount), 0)
-                FROM Payment p
-                WHERE p.branch.id = :branchId
-                  AND p.paymentMethod = com.example.demo.common.enums.PaymentMethod.CARD
-                  AND p.createdAt BETWEEN :start AND :end
-            """)
-    BigDecimal sumCardPayments(
-            @Param("branchId") Long branchId,
-            @Param("start") LocalDateTime start,
-            @Param("end") LocalDateTime end);
-
-    @Query("""
-                SELECT COALESCE(SUM(p.amount), 0)
-                FROM Payment p
-                WHERE p.branch.id = :branchId
-                  AND p.paymentMethod = com.example.demo.common.enums.PaymentMethod.TRANSFER
-                  AND p.createdAt BETWEEN :start AND :end
-            """)
-    BigDecimal sumTransferPayments(
-            @Param("branchId") Long branchId,
-            @Param("start") LocalDateTime start,
-            @Param("end") LocalDateTime end);
-
     @Query(value = """
                 SELECT DATE(p.created_at) as sale_date,
                        COALESCE(SUM(p.amount), 0) as total

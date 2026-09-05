@@ -5,6 +5,8 @@ import com.example.demo.cash.model.CashMovement;
 import com.example.demo.cash.model.CashRegister;
 import com.example.demo.cash.repository.CashMovementRepository;
 import com.example.demo.cash.repository.CashRegisterRepository;
+import com.example.demo.cash.repository.projection.CashMovementTotalsProjection;
+import com.example.demo.cash.repository.projection.CashPaymentTotalsProjection;
 import com.example.demo.common.enums.CashMovementType;
 import com.example.demo.common.enums.CashStatus;
 import com.example.demo.common.enums.PaymentMethod;
@@ -34,6 +36,8 @@ import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
+
+import io.micrometer.core.annotation.Timed;
 
 @Service
 @RequiredArgsConstructor
@@ -99,6 +103,7 @@ public class CashService {
         return buildResponse(cash, summary);
     }
 
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "cash", "operation", "current"})
     public CashRegisterResponse currentCash() {
         CashRegister cash = getOpenCashRegister();
         CashSummary summary = calculateCashSummary(cash);
@@ -106,6 +111,7 @@ public class CashService {
     }
 
     @Transactional
+    @Timed(value = "spacekids.service.requests", extraTags = {"service", "cash", "operation", "close"})
     public CashRegisterResponse closeCash(CloseCashRequest request) {
 
         if (request.getCountedCash() == null) {
@@ -423,27 +429,26 @@ public class CashService {
         LocalDateTime end = cash.getClosedAt() != null
                 ? cash.getClosedAt()
                 : LocalDateTime.now();
+        Long tenantId = cash.getTenant().getId();
         Long branchId = cash.getBranch().getId();
 
-        BigDecimal posCashSales = safe(paymentRepository.sumCashPayments(branchId, start, end));
-        BigDecimal posCardSales = safe(paymentRepository.sumCardPayments(branchId, start, end));
-        BigDecimal posTransferSales = safe(paymentRepository.sumTransferPayments(branchId, start, end));
-
-        BigDecimal eventCashPayments = safe(eventPaymentRepository.sumByCashRegisterAndPaymentMethod(
-                cash.getId(), PaymentMethod.CASH));
-        BigDecimal eventCardPayments = safe(eventPaymentRepository.sumByCashRegisterAndPaymentMethod(
-                cash.getId(), PaymentMethod.CARD));
-        BigDecimal eventTransferPayments = safe(eventPaymentRepository.sumByCashRegisterAndPaymentMethod(
-                cash.getId(), PaymentMethod.TRANSFER));
+        CashPaymentTotalsProjection paymentTotals = cashRegisterRepository.sumPaymentTotals(
+                tenantId, branchId, cash.getId(), start, end);
+        BigDecimal posCashSales = safe(paymentTotals.getPosCashSales());
+        BigDecimal posCardSales = safe(paymentTotals.getPosCardSales());
+        BigDecimal posTransferSales = safe(paymentTotals.getPosTransferSales());
+        BigDecimal eventCashPayments = safe(paymentTotals.getEventCashPayments());
+        BigDecimal eventCardPayments = safe(paymentTotals.getEventCardPayments());
+        BigDecimal eventTransferPayments = safe(paymentTotals.getEventTransferPayments());
 
         BigDecimal cashSales = posCashSales.add(eventCashPayments);
         BigDecimal cardSales = posCardSales.add(eventCardPayments);
         BigDecimal transferSales = posTransferSales.add(eventTransferPayments);
 
-        BigDecimal depositTotal = safe(cashMovementRepository.sumByCashRegisterAndType(
-                cash.getId(), CashMovementType.DEPOSIT));
-        BigDecimal withdrawalTotal = safe(cashMovementRepository.sumByCashRegisterAndType(
-                cash.getId(), CashMovementType.WITHDRAWAL));
+        CashMovementTotalsProjection movementTotals = cashMovementRepository.sumMovementTotals(
+                tenantId, branchId, cash.getId());
+        BigDecimal depositTotal = safe(movementTotals.getDepositTotal());
+        BigDecimal withdrawalTotal = safe(movementTotals.getWithdrawalTotal());
 
         BigDecimal expectedCash = cash.getOpeningAmount()
                 .add(cashSales)
@@ -467,9 +472,10 @@ public class CashService {
     }
 
     private CashRegister getOpenCashRegister() {
+        Long tenantId = TenantContext.getTenantId();
         Long branchId = TenantContext.getBranchId();
         return cashRegisterRepository
-                .findByBranch_IdAndStatus(branchId, CashStatus.OPEN)
+                .findByTenant_IdAndBranch_IdAndStatus(tenantId, branchId, CashStatus.OPEN)
                 .orElseThrow(() -> new IllegalStateException("No hay caja abierta"));
     }
 
