@@ -29,6 +29,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
 
     @Timed(value = "spacekids.service.requests", extraTags = {"service", "auth", "operation", "login"})
+    @Transactional(readOnly = true)
     public LoginResponse login(LoginRequest request) {
 
         Tenant tenant = tenantRepository
