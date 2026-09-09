@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -30,31 +31,32 @@ import jakarta.servlet.http.HttpServletResponse;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
+@EnableConfigurationProperties(CorsProperties.class)
 public class SecurityConfig {
 
     private final JwtService jwtService;
     private final UserRepository userRepository;
     private final TenantRepository tenantRepository;
     private final MeterRegistry meterRegistry;
+    private final CorsProperties corsProperties;
 
     public SecurityConfig(JwtService jwtService,
             UserRepository userRepository,
             TenantRepository tenantRepository,
-            MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry,
+            CorsProperties corsProperties) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
         this.tenantRepository = tenantRepository;
         this.meterRegistry = meterRegistry;
+        this.corsProperties = corsProperties;
     }
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
 
-        config.setAllowedOrigins(List.of(
-                "http://localhost:5173",
-                "https://spacekidshgo.site",
-                "https://www.spacekidshgo.site"));
+        config.setAllowedOrigins(corsProperties.allowedOrigins());
 
         config.setAllowedMethods(List.of(
                 "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
@@ -66,7 +68,6 @@ public class SecurityConfig {
         config.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        // Cambio 1: Aplicar CORS a todas las rutas (incluyendo /ws para WebSocket)
         source.registerCorsConfiguration("/**", config);
 
         return source;

@@ -68,6 +68,7 @@ public class UserService {
     // ============================================================
     // LIST USERS (BY TENANT)
     // ============================================================
+    @Transactional(readOnly = true)
     public List<UserResponse> findAll() {
 
         Long tenantId = TenantContext.getTenantId();
@@ -81,6 +82,7 @@ public class UserService {
     // ============================================================
     // FIND BY PUBLIC ID (AISLADO)
     // ============================================================
+    @Transactional(readOnly = true)
     public UserResponse findByPublicId(String publicId) {
 
         Long tenantId = TenantContext.getTenantId();

@@ -1,6 +1,7 @@
 package com.example.demo.user.repository;
 
 import com.example.demo.user.model.User;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;
@@ -9,6 +10,7 @@ import java.util.List;
 public interface UserRepository extends JpaRepository<User, Long> {
 
     // 🔎 Buscar por UUID y tenant
+    @EntityGraph(attributePaths = "branch")
     Optional<User> findByPublicIdAndTenant_Id(String publicId, Long tenantId);
 
     Optional<User> findByIdAndTenant_IdAndBranch_Id(Long id, Long tenantId, Long branchId);
@@ -23,6 +25,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     boolean existsByTenant_IdAndEmail(Long tenantId, String email);
 
     // 🔎 Listar usuarios del tenant
+    @EntityGraph(attributePaths = "branch")
     List<User> findAllByTenant_Id(Long tenantId);
 
 }

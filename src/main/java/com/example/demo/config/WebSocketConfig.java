@@ -26,19 +26,22 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final JwtService jwtService;
     private final UserRepository userRepository;
     private final TenantRepository tenantRepository;
+    private final CorsProperties corsProperties;
 
     public WebSocketConfig(JwtService jwtService,
             UserRepository userRepository,
-            TenantRepository tenantRepository) {
+            TenantRepository tenantRepository,
+            CorsProperties corsProperties) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
         this.tenantRepository = tenantRepository;
+        this.corsProperties = corsProperties;
     }
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("http://localhost:*");
+                .setAllowedOrigins(corsProperties.asArray());
     }
 
     @Override
