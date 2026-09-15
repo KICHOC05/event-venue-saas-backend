@@ -142,6 +142,6 @@ public class GlobalExceptionHandler {
                                                 "timestamp", LocalDateTime.now(),
                                                 "status", 500,
                                                 "error", "Internal Server Error",
-                                                "message", ex.getMessage()));
+                                                "message", "No fue posible cargar la información."));
         }
 }

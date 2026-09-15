@@ -2,6 +2,7 @@ package com.example.demo.event.repository;
 
 import com.example.demo.common.enums.EventStatus;
 import com.example.demo.event.model.EventBooking;
+import com.example.demo.event.repository.projection.DashboardUpcomingEventProjection;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -34,6 +35,24 @@ public interface EventBookingRepository extends JpaRepository<EventBooking, Long
             Long tenantId,
             LocalDate from,
             LocalDate to
+    );
+
+    @Query("""
+        SELECT event.eventDate AS eventDate,
+               event.customerName AS customerName,
+               product.name AS packageName,
+               event.guestChildren AS guestChildren,
+               event.status AS status
+        FROM EventBooking event
+        JOIN event.packageProduct product
+        WHERE event.tenant.id = :tenantId
+          AND event.eventDate BETWEEN :from AND :to
+        ORDER BY event.eventDate ASC, event.startTime ASC
+    """)
+    List<DashboardUpcomingEventProjection> findDashboardUpcoming(
+            @Param("tenantId") Long tenantId,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to
     );
 
     @Query("SELECT DISTINCT e.eventDate FROM EventBooking e " +

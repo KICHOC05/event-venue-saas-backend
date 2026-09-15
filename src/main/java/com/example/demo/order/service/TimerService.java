@@ -4,8 +4,8 @@ import com.example.demo.common.enums.OrderItemStatus;
 import com.example.demo.order.dto.ActiveSessionResponse;
 import com.example.demo.order.dto.TimerDashboardResponse;
 import com.example.demo.order.dto.TimerHistoryResponse;
-import com.example.demo.order.model.OrderItem;
 import com.example.demo.order.repository.OrderItemRepository;
+import com.example.demo.order.repository.projection.TimerSessionProjection;
 import com.example.demo.security.TenantContext;
 
 import java.time.LocalDate;
@@ -14,6 +14,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -32,15 +33,16 @@ public class TimerService {
     // =========================
 
    @Timed(value = "spacekids.service.requests", extraTags = {"service", "timer", "operation", "active"})
+   @Transactional(readOnly = true)
    public List<ActiveSessionResponse> getActiveSessions() {
 
     Long tenantId = TenantContext.getTenantId();
 
     LocalDateTime now = LocalDateTime.now();
 
-    List<OrderItem> items =
+    List<TimerSessionProjection> items =
             orderItemRepository
-                    .findActiveTimers(tenantId);
+                    .findActiveTimerProjections(tenantId);
 
     return items.stream()
             .map(item -> mapToResponse(item, now))
@@ -52,6 +54,7 @@ public class TimerService {
     // =========================
 
     @Timed(value = "spacekids.service.requests", extraTags = {"service", "timer", "operation", "history"})
+    @Transactional(readOnly = true)
     public Page<TimerHistoryResponse> getSessionHistory(
             String search,
             String status,
@@ -88,7 +91,7 @@ public class TimerService {
         }
 
         // Buscar con los filtros aplicados
-        Page<OrderItem> items = orderItemRepository.findTimerHistory(
+        Page<TimerSessionProjection> items = orderItemRepository.findTimerHistory(
                 tenantId,
                 itemStatus,
                 search,
@@ -102,14 +105,15 @@ public class TimerService {
     }
 
     @Timed(value = "spacekids.service.requests", extraTags = {"service", "timer", "operation", "dashboard"})
+    @Transactional(readOnly = true)
     public TimerDashboardResponse getTimersDashboard() {
 
     Long tenantId = TenantContext.getTenantId();
 
     LocalDateTime now = LocalDateTime.now();
 
-    List<OrderItem> activeItems =
-            orderItemRepository.findActiveTimers(tenantId);
+    List<TimerSessionProjection> activeItems =
+            orderItemRepository.findActiveTimerProjections(tenantId);
 
     long expiringSoon =
             activeItems.stream()
@@ -143,18 +147,18 @@ public class TimerService {
     // =========================
 
     private ActiveSessionResponse mapToResponse(
-            OrderItem item,
+            TimerSessionProjection item,
             LocalDateTime now) {
 
         ActiveSessionResponse response =
                 new ActiveSessionResponse();
 
         response.setItemPublicId(
-                item.getPublicId());
+                item.getItemPublicId());
         response.setOrderPublicId(
-                item.getOrder().getPublicId());
+                item.getOrderPublicId());
         response.setCustomerName(
-                item.getOrder().getCustomerName());
+                item.getCustomerName());
 
         String childName =
                 item.getChildName();
@@ -165,7 +169,7 @@ public class TimerService {
                         : "Sin nombre");
 
         response.setProductName(
-                item.getProduct().getName());
+                item.getProductName());
 
         response.setSessionStart(
                 item.getSessionStart());
@@ -237,17 +241,17 @@ public class TimerService {
         return response;
     }
 
-    private TimerHistoryResponse mapToHistoryResponse(OrderItem item) {
+    private TimerHistoryResponse mapToHistoryResponse(TimerSessionProjection item) {
         TimerHistoryResponse response = new TimerHistoryResponse();
 
-        response.setItemPublicId(item.getPublicId());
-        response.setOrderPublicId(item.getOrder().getPublicId());
-        response.setCustomerName(item.getOrder().getCustomerName());
+        response.setItemPublicId(item.getItemPublicId());
+        response.setOrderPublicId(item.getOrderPublicId());
+        response.setCustomerName(item.getCustomerName());
         
         String childName = item.getChildName();
         response.setChildName(childName != null ? childName : "Sin nombre");
         
-        response.setProductName(item.getProduct().getName());
+        response.setProductName(item.getProductName());
         response.setSessionStart(item.getSessionStart());
         response.setSessionEnd(item.getSessionEnd());
         response.setDurationMinutes(item.getDurationMinutes());

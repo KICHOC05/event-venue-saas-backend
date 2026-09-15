@@ -6,9 +6,9 @@ import com.example.demo.dashboard.dto.DashboardResponse.InventorySummary;
 import com.example.demo.dashboard.dto.DashboardResponse.LowStockProductDTO;
 import com.example.demo.dashboard.dto.DashboardResponse.UpcomingEventDTO;
 import com.example.demo.dashboard.dto.StatsResponse.PaymentBreakdown;
-import com.example.demo.event.model.EventBooking;
 import com.example.demo.event.repository.EventBookingRepository;
 import com.example.demo.event.repository.EventPaymentRepository;
+import com.example.demo.event.repository.projection.DashboardUpcomingEventProjection;
 import com.example.demo.order.repository.OrderItemRepository;
 import com.example.demo.order.repository.OrderRepository;
 import com.example.demo.product.model.Product;
@@ -17,6 +17,7 @@ import com.example.demo.security.TenantContext;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -50,6 +51,7 @@ public class DashboardService {
                         EventStatus.IN_PROGRESS);
 
         @Timed(value = "spacekids.service.requests", extraTags = {"service", "dashboard", "operation", "summary"})
+        @Transactional(readOnly = true)
         public DashboardResponse getDashboard() {
 
                 Long tenantId = TenantContext.getTenantId();
@@ -94,8 +96,8 @@ public class DashboardService {
                                                 tenantId, startOfMonth, endExclusive),
                                 5);
 
-                List<EventBooking> upcomingBookings = eventBookingRepository
-                                .findByTenant_IdAndEventDateBetweenOrderByEventDateAscStartTimeAsc(
+                List<DashboardUpcomingEventProjection> upcomingBookings = eventBookingRepository
+                                .findDashboardUpcoming(
                                                 tenantId, today, today.plusYears(1))
                                 .stream()
                                 .filter(e -> UPCOMING_EVENT_STATUSES.contains(e.getStatus()))
@@ -205,13 +207,11 @@ public class DashboardService {
                                 .build();
         }
 
-        private UpcomingEventDTO toUpcomingEventDTO(EventBooking event) {
+        private UpcomingEventDTO toUpcomingEventDTO(DashboardUpcomingEventProjection event) {
                 return UpcomingEventDTO.builder()
                                 .date(event.getEventDate() != null ? event.getEventDate().format(DATE_FMT) : "")
                                 .client(event.getCustomerName())
-                                .packageName(event.getPackageProduct() != null
-                                                ? event.getPackageProduct().getName()
-                                                : "-")
+                                .packageName(event.getPackageName() != null ? event.getPackageName() : "-")
                                 .children(event.getGuestChildren() != null ? event.getGuestChildren() : 0)
                                 .status(mapEventStatus(event.getStatus()))
                                 .build();

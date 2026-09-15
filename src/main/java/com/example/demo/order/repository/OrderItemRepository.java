@@ -2,6 +2,7 @@ package com.example.demo.order.repository;
 
 import com.example.demo.common.enums.OrderItemStatus;
 import com.example.demo.order.model.OrderItem;
+import com.example.demo.order.repository.projection.TimerSessionProjection;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -117,6 +118,30 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
             @Param("tenantId") Long tenantId);
 
     @Query("""
+        SELECT oi.publicId AS itemPublicId,
+               o.publicId AS orderPublicId,
+               o.customerName AS customerName,
+               oi.childName AS childName,
+               p.name AS productName,
+               oi.sessionStart AS sessionStart,
+               oi.sessionEnd AS sessionEnd,
+               oi.durationMinutes AS durationMinutes,
+               oi.status AS status
+        FROM OrderItem oi
+        JOIN oi.order o
+        JOIN oi.product p
+        WHERE o.tenant.id = :tenantId
+        AND oi.active = true
+        AND p.type = com.example.demo.common.enums.ProductType.SERVICE
+        AND oi.sessionStart IS NOT NULL
+        AND oi.sessionEnd IS NOT NULL
+        AND oi.durationMinutes IS NOT NULL
+        ORDER BY oi.sessionEnd ASC
+        """)
+    List<TimerSessionProjection> findActiveTimerProjections(
+            @Param("tenantId") Long tenantId);
+
+    @Query("""
         SELECT oi
         FROM OrderItem oi
         WHERE oi.active = true
@@ -150,11 +175,21 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
             OrderItemStatus status,
             Long tenantId);
 
-    @Query("""
-        SELECT oi
+    @Query(value = """
+        SELECT oi.publicId AS itemPublicId,
+               o.publicId AS orderPublicId,
+               o.customerName AS customerName,
+               oi.childName AS childName,
+               p.name AS productName,
+               oi.sessionStart AS sessionStart,
+               oi.sessionEnd AS sessionEnd,
+               oi.durationMinutes AS durationMinutes,
+               oi.status AS status
         FROM OrderItem oi
-        WHERE oi.order.tenant.id = :tenantId
-        AND oi.product.type = com.example.demo.common.enums.ProductType.SERVICE
+        JOIN oi.order o
+        JOIN oi.product p
+        WHERE o.tenant.id = :tenantId
+        AND p.type = com.example.demo.common.enums.ProductType.SERVICE
         AND oi.sessionStart IS NOT NULL
         AND oi.sessionEnd IS NOT NULL
         AND oi.durationMinutes IS NOT NULL
@@ -162,15 +197,35 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
         AND (
             :search IS NULL
             OR LOWER(COALESCE(oi.childName,'')) LIKE LOWER(CONCAT('%',:search,'%'))
-            OR LOWER(COALESCE(oi.order.customerName,'')) LIKE LOWER(CONCAT('%',:search,'%'))
+            OR LOWER(COALESCE(o.customerName,'')) LIKE LOWER(CONCAT('%',:search,'%'))
         )
         AND (
             :startDate IS NULL OR :endDate IS NULL
             OR oi.sessionStart >= :startDate AND oi.sessionStart < :endDate
         )
         ORDER BY oi.sessionStart DESC
+        """, countQuery = """
+        SELECT COUNT(oi)
+        FROM OrderItem oi
+        JOIN oi.order o
+        JOIN oi.product p
+        WHERE o.tenant.id = :tenantId
+        AND p.type = com.example.demo.common.enums.ProductType.SERVICE
+        AND oi.sessionStart IS NOT NULL
+        AND oi.sessionEnd IS NOT NULL
+        AND oi.durationMinutes IS NOT NULL
+        AND (:status IS NULL OR oi.status = :status)
+        AND (
+            :search IS NULL
+            OR LOWER(COALESCE(oi.childName,'')) LIKE LOWER(CONCAT('%',:search,'%'))
+            OR LOWER(COALESCE(o.customerName,'')) LIKE LOWER(CONCAT('%',:search,'%'))
+        )
+        AND (
+            :startDate IS NULL OR :endDate IS NULL
+            OR oi.sessionStart >= :startDate AND oi.sessionStart < :endDate
+        )
         """)
-    Page<OrderItem> findTimerHistory(
+    Page<TimerSessionProjection> findTimerHistory(
             @Param("tenantId") Long tenantId,
             @Param("status") OrderItemStatus status,
             @Param("search") String search,
